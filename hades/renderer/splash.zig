@@ -152,15 +152,17 @@ pub fn runSplash() !void {
         const f11 = window.getKey(.F11);
         if (f11 == .press and !f11_was_down) {
             if (fullscreen) {
+                // Exit fullscreen: restore saved windowed state
+                window.setMonitor(null, windowed_state.x, windowed_state.y, windowed_state.w, windowed_state.h, 0);
+                fullscreen = false;
+            } else {
+                // Enter fullscreen: save current window state before switching
                 windowed_state = .{
                     .x = window.getPos()[0],
                     .y = window.getPos()[1],
                     .w = window.getSize()[0],
                     .h = window.getSize()[1],
                 };
-                window.setMonitor(null, windowed_state.x, windowed_state.y, windowed_state.w, windowed_state.h, 0);
-                fullscreen = false;
-            } else {
                 if (glfw.Monitor.getPrimary()) |monitor| {
                     const mode = monitor.getVideoMode() catch null;
                     if (mode) |real_mode| {
