@@ -4,11 +4,23 @@ const renderer_mod = @import("renderer.zig");
 const demos = @import("demos.zig");
 const render_types = @import("render_types.zig");
 
+const WindowedState = struct {
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+};
+
 const AppContext = struct {
     allocator: std.mem.Allocator,
     renderer: *renderer_mod.Renderer,
     message_buf: *[256]u21,
     message_len: *usize,
+    current_layer_idx: *usize,
+    available_layers: []const i32,
+    current_demo: *demos.Demo,
+    fullscreen: *bool,
+    windowed_state: *WindowedState,
 };
 
 fn charCallback(win: *glfw.Window, codepoint: u32) callconv(.c) void {
@@ -24,6 +36,71 @@ fn charCallback(win: *glfw.Window, codepoint: u32) callconv(.c) void {
     }
 }
 
+fn keyCallback(win: *glfw.Window, key: glfw.Key, _: i32, action: glfw.Action, _: glfw.Mods) callconv(.c) void {
+    const ctx = glfw.getWindowUserPointer(win, AppContext) orelse return;
+    switch (key) {
+        .backspace => {
+            if (action == .press or action == .repeat) {
+                if (ctx.message_len.* > 0) {
+                    ctx.message_len.* -= 1;
+                    ctx.renderer.buildTextGeometry(ctx.allocator, ctx.message_buf.*[0..ctx.message_len.*], 300, 300) catch {};
+                }
+            }
+        },
+        .up => {
+            if (action == .press or action == .repeat) {
+                const current = ctx.current_layer_idx.*;
+                const len = ctx.available_layers.len;
+                const next = (current + 1) % len;
+                ctx.current_layer_idx.* = @intCast(next);
+            }
+        },
+        .down => {
+            if (action == .press or action == .repeat) {
+                const current = ctx.current_layer_idx.*;
+                const len = ctx.available_layers.len;
+                const prev = if (current == 0) len - 1 else current - 1;
+                ctx.current_layer_idx.* = @intCast(prev);
+            }
+        },
+        .right => {
+            if (action == .press or action == .repeat) {
+                ctx.current_demo.* = if (ctx.current_demo.* == .splash) .drippy else .splash;
+            }
+        },
+        .left => {
+            if (action == .press or action == .repeat) {
+                ctx.current_demo.* = if (ctx.current_demo.* == .splash) .drippy else .splash;
+            }
+        },
+        .F11 => {
+            if (action == .press) {
+                const window = win;
+                const fullscreen = ctx.fullscreen.*;
+                if (fullscreen) {
+                    window.setMonitor(null, ctx.windowed_state.x, ctx.windowed_state.y, ctx.windowed_state.w, ctx.windowed_state.h, 0);
+                    ctx.fullscreen.* = false;
+                } else {
+                    const size = window.getSize();
+                    ctx.windowed_state.* = .{
+                        .x = window.getPos()[0],
+                        .y = window.getPos()[1],
+                        .w = size[0],
+                        .h = size[1],
+                    };
+                    if (glfw.Monitor.getPrimary()) |monitor| {
+                        if (monitor.getVideoMode() catch null) |vm| {
+                            window.setMonitor(monitor, 0, 0, vm.width, vm.height, vm.refresh_rate);
+                            ctx.fullscreen.* = true;
+                        }
+                    }
+                }
+            }
+        },
+        else => {},
+    }
+}
+
 pub fn runSplash() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
@@ -35,7 +112,7 @@ pub fn runSplash() !void {
     const start_fullscreen = true;
     var window: *glfw.Window = undefined;
     var fullscreen = start_fullscreen;
-    var windowed_state = struct { x: i32, y: i32, w: i32, h: i32 }{ .x = 100, .y = 100, .w = 800, .h = 600 };
+    var windowed_state = WindowedState{ .x = 100, .y = 100, .w = 800, .h = 600 };
 
     if (start_fullscreen) {
         const monitor = glfw.Monitor.getPrimary() orelse return error.NoMonitor;
@@ -43,7 +120,6 @@ pub fn runSplash() !void {
         if (mode) |vm| {
             window = try glfw.Window.create(vm.width, vm.height, "Hades", monitor, null);
         } else {
-            // Fallback to windowed if video mode unavailable
             window = try glfw.Window.create(800, 600, "Hades", null, null);
         }
     } else {
@@ -89,91 +165,29 @@ pub fn runSplash() !void {
 
     try rend.buildTextGeometry(allocator, message_buf[0..message_len], 300, 300);
 
+    // These variables need to live long enough and be shared with callbacks
+    var current_layer_idx: usize = 0;
+    var current_demo: demos.Demo = .splash;
+
     const app_ctx = try allocator.create(AppContext);
     app_ctx.* = .{
         .allocator = allocator,
         .renderer = &rend,
         .message_buf = &message_buf,
         .message_len = &message_len,
+        .current_layer_idx = &current_layer_idx,
+        .available_layers = available_layers[0..available_count],
+        .current_demo = &current_demo,
+        .fullscreen = &fullscreen,
+        .windowed_state = &windowed_state,
     };
     window.setUserPointer(app_ctx);
     _ = window.setCharCallback(charCallback);
-
-    var current_layer_idx: usize = 0;
-    var current_demo: demos.Demo = .splash;
-
-    var up_was_down = false;
-    var down_was_down = false;
-    var left_was_down = false;
-    var right_was_down = false;
-    var backspace_was_down = false;
-    var f11_was_down = false;
+    _ = window.setKeyCallback(keyCallback);
 
     const start_time = glfw.getTime();
 
     while (!window.shouldClose()) {
-        const up = window.getKey(.up);
-        if (up == .press and !up_was_down) {
-            current_layer_idx = (current_layer_idx + 1) % available_count;
-        }
-        up_was_down = (up == .press);
-
-        const down = window.getKey(.down);
-        if (down == .press and !down_was_down) {
-            if (current_layer_idx == 0) {
-                current_layer_idx = available_count - 1;
-            } else {
-                current_layer_idx -= 1;
-            }
-        }
-        down_was_down = (down == .press);
-
-        const left = window.getKey(.left);
-        if (left == .press and !left_was_down) {
-            current_demo = if (@intFromEnum(current_demo) == 0) demos.Demo.drippy else demos.Demo.splash;
-        }
-        left_was_down = (left == .press);
-
-        const right = window.getKey(.right);
-        if (right == .press and !right_was_down) {
-            current_demo = if (@intFromEnum(current_demo) == 0) demos.Demo.drippy else demos.Demo.splash;
-        }
-        right_was_down = (right == .press);
-
-        const backspace = window.getKey(.backspace);
-        if (backspace == .press and !backspace_was_down) {
-            if (message_len > 0) {
-                message_len -= 1;
-                rend.buildTextGeometry(allocator, message_buf[0..message_len], 300, 300) catch {};
-            }
-        }
-        backspace_was_down = (backspace == .press);
-
-        const f11 = window.getKey(.F11);
-        if (f11 == .press and !f11_was_down) {
-            if (fullscreen) {
-                // Exit fullscreen: restore saved windowed state
-                window.setMonitor(null, windowed_state.x, windowed_state.y, windowed_state.w, windowed_state.h, 0);
-                fullscreen = false;
-            } else {
-                // Enter fullscreen: save current window state before switching
-                windowed_state = .{
-                    .x = window.getPos()[0],
-                    .y = window.getPos()[1],
-                    .w = window.getSize()[0],
-                    .h = window.getSize()[1],
-                };
-                if (glfw.Monitor.getPrimary()) |monitor| {
-                    const mode = monitor.getVideoMode() catch null;
-                    if (mode) |real_mode| {
-                        window.setMonitor(monitor, 0, 0, real_mode.width, real_mode.height, real_mode.refresh_rate);
-                        fullscreen = true;
-                    }
-                }
-            }
-        }
-        f11_was_down = (f11 == .press);
-
         glfw.pollEvents();
 
         rend.resizeIfNeeded(window);
