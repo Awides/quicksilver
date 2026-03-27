@@ -19,10 +19,10 @@ const CacheHeader = extern struct {
     pixel_data_len: usize,
 };
 
-const thin_data = @embedFile("embedded/Iosevka-Thin_2048x2048_128px_32rg.atlas");
-const heavy_data = @embedFile("embedded/Iosevka-Heavy_2048x2048_128px_32rg.atlas");
-const aile_regular_data = @embedFile("embedded/IosevkaAile-Regular_2048x2048_128px_32rg.atlas");
-const aile_semibold_data = @embedFile("embedded/IosevkaAile-SemiBold_2048x2048_128px_32rg.atlas");
+const thin_data = @embedFile("../embedded/Iosevka-Thin_2048x2048_128px_32rg.atlas");
+const heavy_data = @embedFile("../embedded/Iosevka-Heavy_2048x2048_128px_32rg.atlas");
+const aile_regular_data = @embedFile("../embedded/IosevkaAile-Regular_2048x2048_128px_32rg.atlas");
+const aile_semibold_data = @embedFile("../embedded/IosevkaAile-SemiBold_2048x2048_128px_32rg.atlas");
 
 fn loadAtlas(allocator: std.mem.Allocator, data: []const u8) !LoadedAtlas {
     // Copy to heap buffer to ensure proper alignment

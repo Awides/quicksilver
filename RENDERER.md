@@ -2,79 +2,57 @@
 
 ## Overview
 
-The renderer is a **WGPU-based MSDF text renderer** with dynamic background and effects, written in Zig. It displays the string "HADES" using multi-channel signed distance fields (MSDF) for high-quality, resolution-independent text, set against an animated lava-lamp background. Fonts are loaded from Iosevka and Iosevka Aile families via a 2‑D texture array.
+The renderer is a **WGPU-based MSDF text renderer** with dynamic background and effects, written in Zig. It displays user-editable text using multi-channel signed distance fields (MSDF) for high-quality, resolution-independent text, set against an animated lava-lamp background. Fonts are pre-generated and embedded directly into the binary.
 
 ### Key Features
 
 - **MSDF font rendering**: Crisp edges at any scale using distance fields.
+- **Embedded atlases**: No runtime font baking; atlas data compiled into the executable via `@embedFile`.
 - **Animated background**: Full-screen gradient + drifting metaballs (lava lamp effect).
 - **Viscosity**: Text vertices distort in response to nearby blobs, simulating fluid motion.
 - **Glow effect**: Distance-field based glow around the text.
 - **Continuous animation**: Text floats, scales, and interacts with background.
+- **Fullscreen toggle**: Press F11 to enter/exit fullscreen; starts in fullscreen.
+- **Edge‑triggered input**: Number keys insert characters, up/down cycle fonts, left/right switch demos, backspace deletes. Debounced to avoid repeat.
+- **Height constraint**: Text scales to fit within 50% of viewport height.
 - **Windows & Linux support**: Uses GLFW for windowing and WGPU for graphics.
-- **Font caching**: Atlas cached to disk (`cache/`).
-- **Texture array**: Up to 5 font layers (2048×2048 pixels each, currently layer 0 = Regular, layer 1 = Bold if available). The WGSL shader selects the layer via `uniforms.font_layer`.
 
-## Architecture
+## Directory Layout
 
 ```
-+---------------------+
-| Zig host (main.zig) |
-+----------+----------+
-            |
-            | creates
-            v
-+-------------------------+      +------------------+
-| WGPU Adapter/Device/Queue|----->| Texture, Sampler |
-+-------------------------+      +------------------+
-            |
-            | uniform buffer (AppUniforms)
-            v
-+---------------------------+
-| Two Render Pipelines      |
-|  - Background (WGSL)      |
-|  - Text (WGSL)            |
-+---------------------------+
-            |
-            v
-+---------------------+
-| Surface (window)    |
-+---------------------+
+hades/
+  main.zig              # entry point
+  renderer/             # renderer subsystem
+    splash.zig          # application loop, input handling
+    renderer.zig        # WGPU init, pipelines, rendering
+    render_types.zig    # shared types (AppUniforms, Vertex, FontInfo, Blob, Vec2)
+    font_atlas.zig      # embedded atlas loader
+    shaders.zig         # embedded WGSL shader sources
+    demos.zig           # demo parameters and blob generation
+    demos/              # demo effect implementations
+      splash.zig
+      drippy.zig
+    embedded/           # .atlas files (Iosevka-Thin, Heavy, Aile-Regular, Aile-SemiBold)
 ```
 
 ## Rendering Pipeline
 
-### 1. Font Atlas Generation
+### 1. Embedded Font Atlases
 
-- Uses **msdf-zig** to generate MSDF atlases for a set of fonts. The current configuration loads:
-  - `fonts/Iosevka-Thin.ttc` (layer 0, weight 100)
-  - `fonts/Iosevka-Heavy.ttc` (layer 1, weight 900)
-  - `fonts/IosevkaAile-Regular.ttc` (layer 2, weight 400)
-  - `fonts/IosevkaAile-SemiBold.ttc` (layer 3, weight 600)
-- Atlas parameters:
-  - Size: 2048×2048 pixels (per layer)
-  - Glyph size: 36px
-  - Padding: 4px
-  - MSDF range: 8
-- Atlases are cached in `cache/` with names like `Iosevka-Thin_2048x2048_36px_8rg.atlas`.
-- Each font is uploaded to its own layer in a 5‑layer 2‑D texture array.
-- The WGSL shader selects the active layer via `uniforms.font_layer`.
-- The host code selects a default layer with the priority: Heavy (900) > Thin (100) > Aile‑SemiBold (600) > Aile‑Regular (400).
-- The atlas produces 3-channel distance data (RGB) which is converted to RGBA for upload.
+- Atlases are generated offline using `msdf-zig` and stored in `hades/embedded/` as `.atlas` binary files.
+- `font_atlas.zig` loads these atlases at runtime with a simple header format (`"CLTA"` magic).
+- Currently four atlases are embedded (Iosevka Thin, Heavy; Aile Regular, SemiBold; 2048×2048, 128px SDF, 3 channels).
+- Each atlas provides glyph metrics and texture coordinates; pixels are uploaded to a 5‑layer texture array.
 
 ### 2. Vertex Generation
 
-- For each character in the text string ("HADES"):
-  - Look up glyph data (advance, bearing_x, bearing_y, width, height, texture coordinates).
-  - Convert from EM units to pixels using `glyph_size_px`.
-  - Construct a 6-vertex quad (two triangles) with positions and UVs.
-  - Horizontal advance via scaled advance.
-- Quids stored in a vertex buffer.
-- The bounding box is computed to derive the static text center `(center_x, center_y)`.
+- For each character in the message, glyph data is looked up from the active font's atlas.
+- Glyph metrics are scaled by `glyph_size_px` and converted to floating‑point positions.
+- A 6‑vertex quad (two triangles) is generated per glyph with positions and UVs.
+- Pen advances by the scaled advance; the bounding box is tracked.
+- Geometry is uploaded to a vertex buffer. If the message is empty, no buffer is created and rendering is skipped.
 
 ### 3. Uniform Buffer (AppUniforms)
-
-The uniform buffer is updated every frame and contains:
 
 ```
 struct Vec2 { x: f32; y: f32; } align(8);
@@ -82,85 +60,86 @@ struct Blob { pos: Vec2; radius: f32; pad: f32; } align(8);
 struct AppUniforms {
   resolution_x: f32;   // window width
   resolution_y: f32;   // window height
-  center_x: f32;       // static text center X (original)
+  center_x: f32;       // static text center X
   center_y: f32;       // static text center Y
   time: f32;           // elapsed seconds
   viscosity: f32;      // 0..1, strength of blob repulsion
   glow: f32;           // glow intensity
   phase: f32;          // gradient color phase offset
-  base_scale: f32;     // multiplier to fit text to window width
+  base_scale: f32;     // multiplier to fit text to window
   font_layer: i32;     // texture array layer index
-  pad1: f32;           // padding to align blobs
-  pad2: f32;           // padding to align blobs
+  pad1: f32;           // padding to 16‑byte boundary
+  pad2: f32;           // padding to 16‑byte boundary
   blobs: [4]Blob;      // animated background blobs
 }
 ```
-
-Size: 112 bytes (matches WGSL std140 layout).
+The uniform buffer is aligned to 256 bytes for GPU requirements.
 
 ### 4. Background Pipeline
 
-**Vertex Shader** (`bg.vert.wgsl`):
-- Uses a full-screen triangle generated via `@builtin(vertex_index)`.
-- No vertex buffer needed.
-
+**Vertex Shader** (`bg.vert.wgsl`): full‑screen triangle via `vertex_index`.
 **Fragment Shader** (`bg.frag.wgsl`):
-- Computes normalised screen coordinates `uv` from `frag_pos`.
-- **Gradient**: `0.5 + 0.5 * cos(time * 0.2 + phase + uv.xyx + vec3(0,2,4))` – slow color cycling.
-- **Metaballs**:
-  - For each of 4 blobs, compute distance from fragment to blob center.
-  - Soft edge using `smoothstep`.
-  - Combine via `max` to get metaball merging.
-- Blends a warm white blob color over the gradient.
+- Slow‑cycling gradient: `0.5 + 0.5 * cos(time * 0.2 + phase + uv.xyx + vec3(0,2,4))`.
+- **Metaballs**: 4 blobs with smooth edges, combined by maximum.
+- Blends warm white blobs over the gradient.
 
 ### 5. Text Pipeline
 
 **Vertex Shader** (`text.vert.wgsl`):
-- **Text position animation**: Adds a sinusoidal offset to the static center to make the text float.
-- **Scaling**: `scale = smoothstep(0..0.5, time) * (1 + 0.1 * sin(time * 2))` – entrance + continuous breathing.
-- **Viscosity distortion**:
-  - For each blob, compute distance from scaled vertex to blob.
-  - If within `blob.radius + 80`, apply a repulsion force proportional to `(1 - d/influence) * viscosity * 40`.
-  - Pushes vertices away, making text appear gooey around blobs.
-- Convert to NDC and pass UVs.
+- Floating: center offset by `sin(time)`.
+- Scale: entrance + breathing.
+- **Viscosity**: for each blob, repel vertices within influence zone by `(1‑d/influence)*viscosity*40`.
+- Transforms to NDC, passes UVs.
 
 **Fragment Shader** (`text.frag.wgsl`):
-- Sample MSDF texture -> `d`.
-- `alpha = smoothstep(0.5 ± width, d)` for edges.
-- **Glow**:
-  - `glow_width = 0.15 + glow * 0.2`
-  - `glow_factor = smoothstep(0.5 ± glow_width, d) * exp(-abs(d-0.5)/glow_width)`
-  - Add `glow_color * glow_factor * glow` to the white text color.
-- Output `rgba(color, alpha)`.
+- Sample MSDF texture → `d`.
+- `alpha = smoothstep(0.5±width, d)`.
+- **Glow**: `glow_width = 0.15 + glow*0.2`, `glow_factor = smoothstep(0.5±glow_width, d) * exp(-abs(d-0.5)/glow_width)`.
+- Add `glow_color * glow_factor * glow` to white text.
 
 ### 6. Render Loop
 
-- Update uniform buffer with time, computed blob positions (orbiting, varying radii), viscosity (sinusoidal), constant glow, and slowly increasing phase.
+- Update uniforms: time, blob positions (orbiting, varying radii), demo‑dependent viscosity/glow/phase.
 - Single render pass:
-  1. Clear to dark color.
-  2. Draw background (full-screen triangle, opaque).
-  3. Draw text (alpha-blended).
+  1. Clear to dark.
+  2. Draw background (opaque).
+  3. Draw text (alpha‑blended).
+- If the message is empty, text draw call is skipped (no vertex buffer bound).
 
-## Current Status
+## Input Handling (splash.zig)
 
-- ✅ MSDF atlas generation with caching.
-- ✅ Background: drifting metaballs, gradient color cycling.
-- ✅ Text: floating, scaling, blob repulsion (viscosity), glow.
-- ✅ Single-pass rendering with correct blending.
-- ✅ Resize handling.
-- ✅ **Multi‑font texture array**: Loads Iosevka (Thin, Heavy) and Iosevka Aile (Regular, SemiBold) into a 5‑layer texture array; selects active layer at runtime.
-- ⚠️ **Baseline alignment**: baseline alignment may be off; currently using top-left reference for glyph placement.
+- **Char callback**: printable codepoints appended to a static 256‑codepoint buffer; rebuild geometry.
+- **Key polling** (edge‑triggered):
+  - `Backspace`: delete last character (rebuild).
+  - `Up/Down`: cycle through available font layers.
+  - `Left/Right`: switch between `Demo.splash` and `Demo.drippy`.
+  - `F11`: toggle fullscreen; updates `windowed_state` and reconfigures surface.
+- Fullscreen starts on launch using the primary monitor's video mode dimensions.
 
-## Known Issues
+## Implementation Notes
 
-1. **Baseline alignment**: Glyphs might be vertically misaligned because `bearing_y` sign could be flipped. The current placement uses `baseline_y - bearing_y` (already corrected) but requires verification.
-2. **Font coverage**: Some OTF/TTC fonts may lack required glyphs; atlas generation can fail and the font is skipped.
+- Zig 0.15.2 and `wgpu-native-zig` 6.5.0 are required.
+- Boolean fields in wgpu structs use `@intFromBool(false)`.
+- `std.mem.copy` replaced by `@memcpy`.
+- `hash_map.deinit()` called without allocator.
+- `surface.getCapabilities` uses the two‑argument signature.
+- Vertex buffer and uniform buffer sizes are aligned properly.
+- The `renderPassEncoder` ends before `finish`.
 
-## Future Work
+## Building
 
-- [ ] Expose parameters (viscosity, glow intensity) via UI.
-- [ ] Add more blob interactions (attraction, color variations).
-- [ ] Add post-processing bloom (multi-pass).
-- [ ] Interactive mouse influence on blobs.
-- [ ] Expand to full "Hades" UI concept (Mercury agent, etc.).
-- [ ] Support runtime font switching via messages.
+```bash
+# Install Zig 0.15.2 and dependencies (see deps/)
+tools/zig build -Dtarget=x86_64-windows-gnu   # cross‑compile for Windows
+tools/zig build                               # native Linux build
+```
+
+The executable is `zig-out/bin/hades` (or `hades.exe`).
+
+## Regenerating Atlases (Optional)
+
+If you need to regenerate the atlases from source fonts, run `./download_fonts.sh` to fetch the required TTC files, then use `msdf-zig` tools. The embedded atlases are already committed; this step is only for font updates.
+
+## License
+
+[Your License Here]
