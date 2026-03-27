@@ -1,0 +1,40 @@
+# Build artifacts
+zig-out/
+.zig-cache/
+cache/
+extracted_zig/
+
+# Binaries
+*.exe
+*.obj
+*.lib
+*.dll
+*.so
+*.dylib
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*~
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+
+# Embedded git repos (accidental submodules)
+# fonts/Iosevka/
+
+# Large toolchains and binaries (not shipped)
+tools/zig-x86_64-linux-0.15.2/
+tools/roc/
+
+# Font release archives (regenerate from sources if needed)
+fonts/iosevka-releases/
+
+# Font binaries (downloaded via script)
+fonts/*.ttc
+fonts/*.ttf
