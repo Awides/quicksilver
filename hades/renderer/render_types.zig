@@ -13,6 +13,13 @@ pub const Blob = extern struct {
     pad: f32,
 };
 
+pub const Droplet = extern struct {
+    x: f32,
+    y: f32,
+    radius: f32,
+    life: f32,
+};
+
 pub const AppUniforms = extern struct {
     resolution_x: f32,
     resolution_y: f32,
@@ -24,9 +31,15 @@ pub const AppUniforms = extern struct {
     phase: f32,
     base_scale: f32,
     font_layer: i32,
+    demo_mode: i32,
+    metaball_alpha: f32,
+    metaball_hardness: f32,
+    // padding to align blobs to 16 bytes (offset must be multiple of 16)
     pad1: f32,
     pad2: f32,
+    pad3: f32,
     blobs: [4]Blob,
+    sweat_droplets: [128]Droplet,
 };
 
 pub const Vertex = struct {

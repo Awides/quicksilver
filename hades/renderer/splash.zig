@@ -166,8 +166,8 @@ pub fn runSplash() !void {
     try rend.buildTextGeometry(allocator, message_buf[0..message_len], 300, 300);
 
     // These variables need to live long enough and be shared with callbacks
-    var current_layer_idx: usize = 0;
-    var current_demo: demos.Demo = .splash;
+    var current_layer_idx: usize = 1; // Iosevka-Heavy layer
+    var current_demo: demos.Demo = .drippy;
 
     const app_ctx = try allocator.create(AppContext);
     app_ctx.* = .{
@@ -186,6 +186,15 @@ pub fn runSplash() !void {
     _ = window.setKeyCallback(keyCallback);
 
     const start_time = glfw.getTime();
+    var last_time = start_time;
+
+    // Droplet state (used for drippy demo) - 128 droplets
+    var droplets: [128]render_types.Droplet = undefined;
+    // Initialize with small random radius
+    for (&droplets, 0..) |*d, i| {
+        const idx_f = @as(f32, @floatFromInt(i));
+        d.* = .{ .x = 0, .y = 0, .radius = 2.0 + 1.5 * @sin(idx_f * 5.0), .life = 1.0 };
+    }
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -194,6 +203,8 @@ pub fn runSplash() !void {
 
         const now = glfw.getTime();
         const time = @as(f32, @floatCast(now - start_time));
+        const dt = @as(f32, @floatCast(now - last_time));
+        last_time = now;
         const resolution = [2]f32{ @floatFromInt(rend.current_width), @floatFromInt(rend.current_height) };
 
         const layer_i32 = available_layers[current_layer_idx];
@@ -206,6 +217,71 @@ pub fn runSplash() !void {
             const height_scale = if (active_font.text_height > 0) (resolution[1] * 0.5) / active_font.text_height else 1.0;
             const base_scale = @min(width_scale, height_scale);
 
+            // Compute screen-space transform to match vertex shader exactly
+            const window_center = @Vector(2, f32){ resolution[0] * 0.5, resolution[1] * 0.5 };
+            var float_offset = @Vector(2, f32){ @sin(time * 0.7) * 50.0, @cos(time * 0.5) * 30.0 };
+            const t_val = @min(time / 0.5, 1.0);
+            const entrance = t_val * t_val * (3.0 - 2.0 * t_val);
+            const anim_scale = 1.0 + 0.1 * @sin(time * 2.0);
+            var scale = base_scale * entrance * anim_scale;
+
+            // For drippy demo: text stays centered and still, no offset or extra scale
+            if (current_demo == .drippy) {
+                float_offset = @Vector(2, f32){ 0.0, 0.0 };
+                scale = base_scale;
+            }
+
+            const screen_center = window_center + float_offset;
+
+        const half_w = active_font.text_width * 0.5;
+        const half_h = active_font.text_height * 0.5;
+        const half_w_screen = half_w * scale;
+        const half_h_screen = half_h * scale;
+        const screen_left = screen_center[0] - half_w_screen;
+        const screen_right = screen_center[0] + half_w_screen;
+        const screen_top = screen_center[1] - half_h_screen;
+        const screen_bottom = screen_center[1] + half_h_screen;
+
+            // Update droplets: growing blobs that move away from center and recycle far off-screen
+            if (current_demo == .drippy) {
+                for (&droplets, 0..) |*d, i| {
+                    const idx_f = @as(f32, @floatFromInt(i));
+
+                    // Grow quickly at first, then slower up to huge size
+                    if (d.radius < 100.0) {
+                        d.radius += 3.0 * dt;
+                    } else if (d.radius < 300.0) {
+                        d.radius += 1.0 * dt;
+                    }
+
+                    // Direction away from center
+                    const center_y = (screen_top + screen_bottom) * 0.5;
+                    const dir: f32 = if (d.y < center_y) -1.0 else 1.0;
+
+                    // Speed: base + acceleration based on distance from center
+                    const dist_away = @abs(d.y - center_y);
+                    const acceleration = 50.0 + 0.08 * dist_away;
+                    const base_speed = 50.0 + d.radius * 2.0;
+                    const speed = base_speed + acceleration;
+
+                    d.y += speed * dt * dir;
+
+                    // Recycle when far off-screen
+                    if (d.y > screen_bottom + 2000.0 or d.y < screen_top - 1000.0) {
+                        const rx = 0.1 + 0.8 * @sin(time * 0.5 + idx_f * 1.7);
+                        const ry = 0.1 + 0.8 * @cos(time * 0.6 + idx_f * 2.1);
+                        d.x = screen_left + rx * (screen_right - screen_left);
+                        d.y = screen_top + ry * (screen_bottom - screen_top);
+                        d.radius = 2.0;
+                    }
+                }
+
+             } else {
+                for (&droplets) |*d| {
+                    d.* = .{ .x = 0, .y = 0, .radius = 0, .life = 1.0 };
+                }
+            }
+
             const uniforms = render_types.AppUniforms{
                 .resolution_x = resolution[0],
                 .resolution_y = resolution[1],
@@ -217,9 +293,14 @@ pub fn runSplash() !void {
                 .phase = demo_params.phase,
                 .base_scale = base_scale,
                 .font_layer = layer_i32,
-                .pad1 = 0,
-                .pad2 = 0,
+                .demo_mode = if (current_demo == .drippy) @as(i32, 1) else @as(i32, 0),
+                .metaball_alpha = if (current_demo == .drippy) 50.0 else 0.0,
+                .metaball_hardness = if (current_demo == .drippy) 0.3 else 1.0,
+                .pad1 = 0.0,
+                .pad2 = 0.0,
+                .pad3 = 0.0,
                 .blobs = blobs,
+                .sweat_droplets = droplets,
             };
 
             rend.render(active_font, &uniforms);
