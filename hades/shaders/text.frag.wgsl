@@ -53,7 +53,7 @@ fn fs_main(@location(0) uv: vec2f, @location(1) screen_pos: vec2f) -> @location(
   // Glyph density: smooth transition from inside (1) to outside (0)
   let glyph_density = smoothstep(0.45, 0.55, d);
 
-  // Droplet density contribution with edge-distance and vertical falloff
+  // Droplet density contribution
   var drop_field: f32 = 0.0;
   for (var i: u32 = 0; i < 128; i++) {
     let drop = uniforms.sweat_droplets[i];
@@ -61,25 +61,11 @@ fn fs_main(@location(0) uv: vec2f, @location(1) screen_pos: vec2f) -> @location(
     let dvec = screen_pos - vec2f(drop.x, drop.y);
     let dist = length(dvec);
     let infl = drop.radius * 1.5;
-    if (dist < infl) {
-      let m = 1.0 - dist / infl;
-      let falloff = m * m;
-
-      // Distance from glyph edge: 0 at edge, positive inside/outside
-      let edge_dist = abs(d - 0.5);
-      // Fade when far from edge: strong fade for deep inside, less for outside near edge
-      let edge_fade = smoothstep(0.3, 0.0, edge_dist);
-
-      // Vertical bias: lower y (larger screen y) gets less fade
-      // Normalized y in [0,1] where 0 at top, 1 at bottom
-      let y_norm = screen_pos.y / uniforms.resolution_y;
-      let vertical_bias = y_norm; // more fade reduction at bottom
-
-      // Combined factor: base edge_fade plus vertical influence
-      let factor = edge_fade * (0.1 + 0.9 * vertical_bias);
-
-      drop_field += falloff * drop.life * uniforms.metaball_alpha * 0.04 * factor;
-    }
+      if (dist < infl) {
+        let m = 1.0 - dist / infl;
+        let falloff = m * m;
+        drop_field += falloff * drop.life * uniforms.metaball_alpha * 0.1 * glyph_density;
+      }
   }
 
   // Combined density (glyph + droplets)

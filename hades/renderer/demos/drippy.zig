@@ -80,15 +80,28 @@ pub fn runDrippy() !void {
 
 
 
-    // Droplets - 128 for surface sweat
-    var droplets: [128]render_types.Droplet = undefined;
-    for (&droplets, 0..) |*d, i| {
-        const idx_f = @as(f32, @floatFromInt(i));
-        d.* = .{ .x = 0, .y = 0, .radius = 2.0 + 1.5 * @sin(idx_f * 5.0), .life = 1.0 };
-    }
 
-    const start_time = glfw.getTime();
-    var last_time = start_time;
+
+     const start_time = glfw.getTime();
+     var last_time = start_time;
+
+    // Droplet state (128 droplets)
+    var droplets: [128]render_types.Droplet = undefined;
+    {
+        const init_w = @as(f32, @floatFromInt(rend.current_width));
+        const init_h = @as(f32, @floatFromInt(rend.current_height));
+        for (&droplets, 0..) |*d, i| {
+            const seed = @as(f32, @floatFromInt(i));
+            const rx = @mod(seed * 12.9898, 1.0);
+            const ry = @mod(seed * 78.233, 1.0);
+            d.* = .{
+                .x = rx * init_w,
+                .y = ry * init_h,
+                .radius = 5.0,
+                .life = 1.0,
+            };
+        }
+    }
 
     while (!window.shouldClose()) {
         glfw.pollEvents();
@@ -96,7 +109,7 @@ pub fn runDrippy() !void {
 
         const now = glfw.getTime();
         const time = @as(f32, @floatCast(now - start_time));
-        const dt = @as(f32, @floatCast(now - last_time));
+        const dt_val = @as(f32, @floatCast(now - last_time));
         last_time = now;
         const resolution = [2]f32{ @floatFromInt(rend.current_width), @floatFromInt(rend.current_height) };
 
@@ -121,37 +134,24 @@ pub fn runDrippy() !void {
         const screen_bottom = screen_center[1] + half_h_screen; // bottom = larger y
         const spawn_y = screen_bottom - 10.0;
 
-        // Update droplets: globs that move up/down, grow, and recycle
+        // Update droplets: pull away from center
+        const center_y = (screen_top + screen_bottom) * 0.5;
         for (&droplets, 0..) |*d, i| {
             const idx_f = @as(f32, @floatFromInt(i));
-
-            // Grow quickly at first, then slower but up to huge size
-            if (d.radius < 100.0) {
-                d.radius += 3.0 * dt;
-            } else if (d.radius < 300.0) {
-                d.radius += 1.0 * dt;
-            }
-
-            // Direction: away from center
-            const center_y = (screen_top + screen_bottom) * 0.5;
             const dir: f32 = if (d.y < center_y) -1.0 else 1.0;
-
-            // Speed: base + acceleration increases with distance from center
-            const dist_away = @abs(d.y - center_y);
-            const acceleration = 50.0 + 0.08 * dist_away;
-            const base_speed = 50.0 + d.radius * 2.0;
-            const speed = base_speed + acceleration;
-
-            d.y += speed * dt * dir;
-
-            // Recycle only when very far off-screen
-            if (d.y > screen_bottom + 2000.0 or d.y < screen_top - 1000.0) {
-                // Respawn inside glyph area, random across text
-                const rx = 0.1 + 0.8 * @sin(time * 0.5 + idx_f * 1.7);
-                const ry = 0.1 + 0.8 * @cos(time * 0.6 + idx_f * 2.1);
-                d.x = screen_left + rx * (screen_right - screen_left);
-                d.y = screen_top + ry * (screen_bottom - screen_top);
-                d.radius = 2.0;
+            d.y += 20.0 * dt_val * dir;
+            if (d.radius < 120.0) {
+                d.radius += 1.0 * dt_val;
+            }
+            if (d.y < screen_top - 20.0 or d.y > screen_bottom + 20.0) {
+                const r = @sin(time * 0.5 + idx_f * 1.7) * 0.5 + 0.5;
+                if (r < 0.3) {
+                    const rx = @mod(idx_f * 12.9898, 1.0);
+                    const ry = @mod(idx_f * 78.233, 1.0);
+                    d.x = screen_left + rx * (screen_right - screen_left);
+                    d.y = screen_top + ry * (screen_bottom - screen_top);
+                    d.radius = 5.0;
+                }
             }
         }
 
@@ -170,8 +170,8 @@ pub fn runDrippy() !void {
             .phase = demo_params.phase,
             .base_scale = base_scale,
             .font_layer = layer_i32,
-            .demo_mode = 1, // drippy
-            .metaball_alpha = 50.0,
+            .demo_mode = 1,
+            .metaball_alpha = 150.0,
             .metaball_hardness = 0.3,
             .pad1 = 0.0,
             .pad2 = 0.0,

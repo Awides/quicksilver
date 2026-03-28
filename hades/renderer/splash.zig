@@ -188,12 +188,22 @@ pub fn runSplash() !void {
     const start_time = glfw.getTime();
     var last_time = start_time;
 
-    // Droplet state (used for drippy demo) - 128 droplets
+    // Droplet state (128 droplets)
     var droplets: [128]render_types.Droplet = undefined;
-    // Initialize with small random radius
-    for (&droplets, 0..) |*d, i| {
-        const idx_f = @as(f32, @floatFromInt(i));
-        d.* = .{ .x = 0, .y = 0, .radius = 2.0 + 1.5 * @sin(idx_f * 5.0), .life = 1.0 };
+    {
+        const init_w = @as(f32, @floatFromInt(rend.current_width));
+        const init_h = @as(f32, @floatFromInt(rend.current_height));
+        for (&droplets, 0..) |*d, i| {
+            const seed = @as(f32, @floatFromInt(i));
+            const rx = @mod(seed * 12.9898, 1.0);
+            const ry = @mod(seed * 78.233, 1.0);
+            d.* = .{
+                .x = rx * init_w,
+                .y = ry * init_h,
+                .radius = 5.0,
+                .life = 1.0,
+            };
+        }
     }
 
     while (!window.shouldClose()) {
@@ -242,41 +252,35 @@ pub fn runSplash() !void {
         const screen_top = screen_center[1] - half_h_screen;
         const screen_bottom = screen_center[1] + half_h_screen;
 
-            // Update droplets: growing blobs that move away from center and recycle far off-screen
+            // Update droplets for drippy demo
             if (current_demo == .drippy) {
+                const center_y = (screen_top + screen_bottom) * 0.5;
                 for (&droplets, 0..) |*d, i| {
                     const idx_f = @as(f32, @floatFromInt(i));
+                    // Direction away from center (up if above, down if below)
+                    const dir: f32 = if (d.y < center_y) -1.0 else 1.0;
+                    // Constant speed
+                    const speed = 20.0;
+                    d.y += speed * dt * dir;
 
-                    // Grow quickly at first, then slower up to huge size
-                    if (d.radius < 100.0) {
-                        d.radius += 3.0 * dt;
-                    } else if (d.radius < 300.0) {
+                    // Grow to target size
+                    if (d.radius < 120.0) {
                         d.radius += 1.0 * dt;
                     }
 
-                    // Direction away from center
-                    const center_y = (screen_top + screen_bottom) * 0.5;
-                    const dir: f32 = if (d.y < center_y) -1.0 else 1.0;
-
-                    // Speed: base + acceleration based on distance from center
-                    const dist_away = @abs(d.y - center_y);
-                    const acceleration = 50.0 + 0.08 * dist_away;
-                    const base_speed = 50.0 + d.radius * 2.0;
-                    const speed = base_speed + acceleration;
-
-                    d.y += speed * dt * dir;
-
-                    // Recycle when far off-screen
-                    if (d.y > screen_bottom + 2000.0 or d.y < screen_top - 1000.0) {
-                        const rx = 0.1 + 0.8 * @sin(time * 0.5 + idx_f * 1.7);
-                        const ry = 0.1 + 0.8 * @cos(time * 0.6 + idx_f * 2.1);
-                        d.x = screen_left + rx * (screen_right - screen_left);
-                        d.y = screen_top + ry * (screen_bottom - screen_top);
-                        d.radius = 2.0;
+                    // Reset when outside text bounds
+                    if (d.y < screen_top - 20.0 or d.y > screen_bottom + 20.0) {
+                        const r = @sin(time * 0.5 + idx_f * 1.7) * 0.5 + 0.5;
+                        if (r < 0.3) {
+                            const rx = @mod(idx_f * 12.9898, 1.0);
+                            const ry = @mod(idx_f * 78.233, 1.0);
+                            d.x = screen_left + rx * (screen_right - screen_left);
+                            d.y = screen_top + ry * (screen_bottom - screen_top);
+                            d.radius = 5.0;
+                        }
                     }
                 }
-
-             } else {
+            } else {
                 for (&droplets) |*d| {
                     d.* = .{ .x = 0, .y = 0, .radius = 0, .life = 1.0 };
                 }
@@ -294,7 +298,7 @@ pub fn runSplash() !void {
                 .base_scale = base_scale,
                 .font_layer = layer_i32,
                 .demo_mode = if (current_demo == .drippy) @as(i32, 1) else @as(i32, 0),
-                .metaball_alpha = if (current_demo == .drippy) 50.0 else 0.0,
+                .metaball_alpha = if (current_demo == .drippy) 150.0 else 0.0,
                 .metaball_hardness = if (current_demo == .drippy) 0.3 else 1.0,
                 .pad1 = 0.0,
                 .pad2 = 0.0,
